@@ -79,6 +79,7 @@ class NoiseGuard:
     errors: int = 0
     paused: bool = False
     messages: list[str] = field(default_factory=list)
+    profile: dict[str, Any] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self.profile = get_noise_profile(self.profile_name)
