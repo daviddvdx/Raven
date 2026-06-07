@@ -1,0 +1,7 @@
+test
+example
+health
+status
+version
+robots.txt
+sitemap.xml

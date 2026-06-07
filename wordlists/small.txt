@@ -1,0 +1,16 @@
+robots.txt
+sitemap.xml
+security.txt
+health
+status
+version
+api
+api/v1
+graphql
+swagger.json
+openapi.json
+api-docs
+admin
+config
+backup
+.env

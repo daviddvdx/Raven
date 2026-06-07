@@ -1,0 +1,95 @@
+idor_bola:
+  interesting_params:
+    - id
+    - user_id
+    - userid
+    - account_id
+    - organizationId
+    - org_id
+    - tenant
+    - tenantId
+    - team_id
+    - project_id
+    - document_id
+    - file_id
+    - order_id
+    - invoice_id
+    - payment_id
+    - message_id
+    - conversation_id
+  risky_actions:
+    - update
+    - edit
+    - delete
+    - export
+    - download
+    - approve
+    - reject
+    - invite
+    - remove
+    - transfer
+    - assign
+    - share
+  suspicious_status_changes:
+    - "user_a_200_user_b_200_same_object"
+    - "unauth_200"
+    - "low_privilege_200"
+    - "forbidden_expected_but_200_received"
+    - "404_for_user_a_200_for_user_b"
+    - "different_body_same_object"
+
+xss:
+  interesting_params:
+    - q
+    - query
+    - search
+    - keyword
+    - name
+    - title
+    - description
+    - message
+    - comment
+    - content
+    - redirect
+    - returnUrl
+    - next
+    - url
+    - callback
+  contexts:
+    - html_body
+    - html_attribute
+    - javascript_string
+    - url_context
+    - json_response
+  safe_probes:
+    - "ravenxss"
+    - "raven-xss-test"
+    - "<ravenxss>"
+    - "\"ravenxss\""
+    - "'ravenxss'"
+
+api:
+  interesting_paths:
+    - "/api"
+    - "/api/v1"
+    - "/api/v2"
+    - "/admin"
+    - "/internal"
+    - "/private"
+    - "/debug"
+    - "/swagger"
+    - "/swagger.json"
+    - "/openapi.json"
+    - "/api-docs"
+    - "/graphql"
+
+oauth_redirect:
+  interesting_params:
+    - redirect_uri
+    - redirect_url
+    - callback
+    - returnUrl
+    - return_url
+    - next
+    - continue
+    - url

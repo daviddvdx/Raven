@@ -1,0 +1,135 @@
+timeout: 10
+threads: 5
+follow_redirects: false
+retries: 1
+output_format: "json"
+safe_mode: true
+
+seclists:
+  enabled: true
+  base_paths:
+    - "/usr/share/seclists"
+    - "/usr/share/wordlists/seclists"
+    - "/opt/SecLists"
+
+wordlist_profiles:
+  quiet:
+    web_content:
+      - "Discovery/Web-Content/common.txt"
+      - "Discovery/Web-Content/raft-small-words.txt"
+    api:
+      - "Discovery/Web-Content/api/api-endpoints.txt"
+      - "Discovery/Web-Content/raft-small-words.txt"
+    sensitive:
+      - "Discovery/Web-Content/quickhits.txt"
+      - "Discovery/Web-Content/common.txt"
+
+  balanced:
+    web_content:
+      - "Discovery/Web-Content/common.txt"
+      - "Discovery/Web-Content/raft-medium-words.txt"
+      - "Discovery/Web-Content/directory-list-2.3-small.txt"
+    api:
+      - "Discovery/Web-Content/api/api-endpoints.txt"
+      - "Discovery/Web-Content/raft-medium-words.txt"
+
+  deep:
+    web_content:
+      - "Discovery/Web-Content/raft-large-words.txt"
+      - "Discovery/Web-Content/directory-list-2.3-medium.txt"
+    api:
+      - "Discovery/Web-Content/api/api-endpoints.txt"
+      - "Discovery/Web-Content/raft-large-words.txt"
+
+exploitdb:
+  enabled: true
+  mode: "metadata_only"
+  allow_poc_text_analysis: false
+  allow_payload_extraction: false
+  max_poc_files_to_scan: 50
+  max_file_size_kb: 256
+  base_paths:
+    - "/usr/share/exploitdb"
+    - "/opt/exploitdb"
+    - "/usr/local/share/exploitdb"
+  searchsploit_binary: "searchsploit"
+  cache_file: "cache/exploitdb_index.json"
+  update_command_hint: "sudo apt update && sudo apt install -y exploitdb && searchsploit -u"
+
+exploitdb_profiles:
+  quiet:
+    metadata_only: true
+    max_results_per_technology: 5
+    include_dos: false
+    include_local_privilege_escalation: false
+    include_shellcode: false
+
+  balanced:
+    metadata_only: true
+    max_results_per_technology: 15
+    include_dos: false
+    include_local_privilege_escalation: false
+    include_shellcode: false
+
+  deep:
+    metadata_only: true
+    max_results_per_technology: 50
+    include_dos: false
+    include_local_privilege_escalation: true
+    include_shellcode: false
+
+workflow:
+  interactive: true
+  default_profile: "quiet"
+  default_noise_level: 3
+  ask_before_each_step: true
+  save_decisions_per_project: true
+  stop_on_waf_detection: false
+  stop_on_many_403: true
+  stop_on_many_429: true
+  stop_on_many_503: true
+
+  defaults:
+    passive_recon: true
+    tech_detection: true
+    js_analysis: true
+    content_discovery: false
+    api_inventory: true
+    cors_check: false
+    oauth_check: false
+    graphql_check: false
+    idor_bola_helper: false
+    xss_reflection_checker: false
+    exploitdb_intelligence: true
+    report_generation: true
+
+  safety:
+    allow_state_changing_methods: false
+    allow_post_by_default: false
+    allow_put_patch_delete_by_default: false
+    require_confirmation_for_noisy_steps: true
+    require_confirmation_for_auth_tests: true
+    require_scope_confirmation: true
+
+  filters:
+    ignore_status:
+      - 404
+    optional_ignore_status:
+      - 403
+    auto_filter_repeated_sizes: true
+    auto_filter_repeated_words: true
+    auto_filter_repeated_lines: true
+
+  rate_limit:
+    quiet:
+      rate: 5
+      threads: 3
+      delay_seconds: 1
+    balanced:
+      rate: 10
+      threads: 5
+      delay_seconds: 0.5
+    deep:
+      rate: 20
+      threads: 10
+      delay_seconds: 0.2

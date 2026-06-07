@@ -1,0 +1,8 @@
+httpx
+typer
+rich
+pyyaml
+beautifulsoup4
+tldextract
+colorama
+pytest

@@ -1,0 +1,20 @@
+program: "Example Bug Bounty"
+researcher: "David DONGA NDOUMOU"
+allowed_domains:
+  - "example.com"
+  - "*.example.com"
+allowed_urls:
+  - "https://www.example.com"
+  - "https://api.example.com"
+deny:
+  - "admin-prod.example.com"
+  - "payments.example.com"
+rate_limit:
+  requests_per_second: 2
+  burst: 3
+headers:
+  User-Agent: "Mozilla/5.0 BugBounty-Research"
+  X-Bug-Bounty: "researcher-id"
+proxy:
+  enabled: false
+  url: "http://127.0.0.1:8080"

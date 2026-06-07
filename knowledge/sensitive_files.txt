@@ -1,0 +1,11 @@
+.env
+.git/config
+config.json
+backup.zip
+db.sql
+swagger.json
+openapi.json
+api-docs
+robots.txt
+security.txt
+sitemap.xml

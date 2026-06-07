@@ -1,0 +1,14 @@
+api
+v1
+v2
+users
+me
+profile
+account
+auth
+login
+logout
+sessions
+graphql
+swagger.json
+openapi.json

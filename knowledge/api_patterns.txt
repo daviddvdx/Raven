@@ -1,0 +1,8 @@
+/api
+/v1/
+/v2/
+/graphql
+/swagger
+/openapi
+/api-docs
+/.well-known/
