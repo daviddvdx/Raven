@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import uuid
 
+from core.banner import print_finding, print_section, print_success
 from core.models import Finding, HTTPResult
 from core.knowledge_loader import KnowledgeLoader
 from core.scoring import score_endpoint
@@ -150,6 +151,8 @@ def fuzz(
     baselines = calibrate_baseline(context) if calibrate else []
     filtered_noise: list[dict] = []
     storage.write_json("wordlists_used.json", [str(item) for item in wordlist_paths])
+    print_section("Fuzz live findings")
+    print_success(f"Wordlist entries: {len(words)} | Terminaisons: {', '.join(exts) if exts else 'none'} | Candidates: {len(candidates)}")
 
     def fetch(url: str) -> HTTPResult | None:
         try:
@@ -206,6 +209,7 @@ def fuzz(
             )
             findings.append(finding)
             storage.append_line("urls.txt", result.url)
+            print_finding(result.status_code, result.url, result.size, result.words, result.lines, score_data.score, result.title)
 
     findings.sort(key=lambda item: item.score, reverse=True)
     storage.write_json("fuzz_results.json", [finding.to_dict() for finding in findings])

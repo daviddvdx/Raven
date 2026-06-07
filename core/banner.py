@@ -61,3 +61,17 @@ def print_warning(message: str) -> None:
 
 def print_error(message: str) -> None:
     console.print(f"[red][-][/red] {message}")
+
+
+def print_finding(status: int, url: str, size: int = 0, words: int = 0, lines: int = 0, score: int = 0, title: str | None = None) -> None:
+    if status in {200, 204}:
+        style = "green"
+    elif status in {301, 302, 307, 308, 401, 403}:
+        style = "yellow"
+    elif status >= 500:
+        style = "red"
+    else:
+        style = "cyan"
+    meta = f"size={size} words={words} lines={lines} score={score}"
+    suffix = f" title={title}" if title else ""
+    console.print(f"[{style}][{status}][/{style}] {url} [dim]{meta}{suffix}[/dim]")
