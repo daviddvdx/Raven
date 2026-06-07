@@ -36,6 +36,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+VALID_PROFILES = {"quiet", "balanced", "deep"}
+
 
 def load_settings(path: str = "config/settings.yaml") -> dict:
     settings_path = Path(path)
@@ -70,6 +72,9 @@ def build_context(
     confirm_deep: bool = False,
     verify_tls: bool = True,
 ):
+    if profile not in VALID_PROFILES:
+        print_error(f"Profil invalide: {profile}. Utilise quiet, balanced ou deep.")
+        raise typer.Exit(1)
     if profile == "deep" and not confirm_deep:
         print_error("Le profil deep exige une confirmation explicite avec --confirm-deep.")
         raise typer.Exit(1)
