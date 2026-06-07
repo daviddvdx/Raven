@@ -1,5 +1,5 @@
 program: "Example Bug Bounty"
-researcher: "David DONGA NDOUMOU"
+researcher: "Daviddvdx"
 allowed_domains:
   - "example.com"
   - "*.example.com"
