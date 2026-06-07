@@ -27,6 +27,7 @@ class HTTPClient:
         rate_limiter: RateLimiter | None = None,
         storage: Storage | None = None,
         noise_guard: Any | None = None,
+        verify_tls: bool = True,
     ) -> None:
         self.timeout = timeout
         self.headers = headers or {}
@@ -37,6 +38,7 @@ class HTTPClient:
         self.rate_limiter = rate_limiter or RateLimiter()
         self.storage = storage
         self.noise_guard = noise_guard
+        self.verify_tls = verify_tls
         self._client = self._build_client()
 
     def _build_client(self) -> httpx.Client:
@@ -45,7 +47,7 @@ class HTTPClient:
             "headers": self.headers,
             "cookies": self.cookies,
             "follow_redirects": self.follow_redirects,
-            "verify": True,
+            "verify": self.verify_tls,
         }
         if self.proxy:
             kwargs["proxy"] = self.proxy
@@ -79,7 +81,7 @@ class HTTPClient:
                 if self.noise_guard:
                     self.noise_guard.observe_timeout()
                 if attempt >= self.retries:
-                    raise
+                    return self._error_result(method.upper(), url, exc)
         raise RuntimeError(f"HTTP request failed: {last_error}")
 
     def get(self, url: str, **kwargs: Any) -> HTTPResult:
@@ -140,6 +142,8 @@ class HTTPClient:
 
     def _curl(self, method: str, url: str, request_kwargs: dict[str, Any]) -> str:
         parts = ["curl", "-i", "-X", method]
+        if not self.verify_tls:
+            parts.append("-k")
         for key, value in self.headers.items():
             parts.extend(["-H", f"{key}: {value}"])
         for key, value in dict(request_kwargs.get("headers", {})).items():
@@ -156,3 +160,24 @@ class HTTPClient:
     @staticmethod
     def _is_interesting(result: HTTPResult) -> bool:
         return result.status_code in {200, 204, 301, 302, 307, 308, 401, 403, 500, 502, 503}
+
+    def _error_result(self, method: str, url: str, exc: Exception) -> HTTPResult:
+        message = str(exc)
+        return HTTPResult(
+            url=url,
+            method=method,
+            status_code=0,
+            size=0,
+            lines=0,
+            words=0,
+            body_hash="",
+            title=None,
+            important_headers={"error": message[:300]},
+            redirect_url=None,
+            response_time_ms=0.0,
+            technologies=[],
+            curl_command=self._curl(method, url, {}),
+            content_type=None,
+            body_preview=message[:500],
+            body_text="",
+        )

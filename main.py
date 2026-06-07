@@ -68,6 +68,7 @@ def build_context(
     extra_config: Optional[dict] = None,
     profile: str = "quiet",
     confirm_deep: bool = False,
+    verify_tls: bool = True,
 ):
     if profile == "deep" and not confirm_deep:
         print_error("Le profil deep exige une confirmation explicite avec --confirm-deep.")
@@ -99,6 +100,7 @@ def build_context(
         rate_limiter=rate_limiter,
         storage=storage,
         noise_guard=noise_guard,
+        verify_tls=verify_tls,
     )
     config = {
         "Target": target,
@@ -112,6 +114,7 @@ def build_context(
         "Rate limit": f"{rate_limiter.requests_per_second} req/s",
         "Profile": profile,
         "Proxy": proxy or "disabled",
+        "TLS verify": str(verify_tls).lower(),
     }
     if extra_config:
         config.update(extra_config)
@@ -153,11 +156,12 @@ def scan(
     timeout: float = typer.Option(10.0, "--timeout"),
     threads: int = typer.Option(5, "--threads"),
     follow_redirects: bool = typer.Option(False, "--follow-redirects"),
+    insecure: bool = typer.Option(False, "--insecure", help="Disable TLS certificate verification for authorized labs/CTFs."),
     project: Optional[str] = typer.Option(None, "--project"),
     profile: str = typer.Option("quiet", "--profile"),
     confirm_deep: bool = typer.Option(False, "--confirm-deep"),
 ) -> None:
-    context = build_context("scan", scope, target, project, timeout, threads, follow_redirects, "results/<project>/recon_results.json", profile=profile, confirm_deep=confirm_deep)
+    context = build_context("scan", scope, target, project, timeout, threads, follow_redirects, "results/<project>/recon_results.json", profile=profile, confirm_deep=confirm_deep, verify_tls=not insecure)
     findings = run_recon(context)
     print_success(f"{len(findings)} finding(s) ecrit(s) dans results/{context['project']}")
     context["http_client"].close()
