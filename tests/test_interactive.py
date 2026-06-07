@@ -25,3 +25,21 @@ def test_ask_int_retries_out_of_range():
 def test_ask_choice_retries_invalid_value():
     session = session_with_answers(["loud", "quiet"])
     assert session.ask_choice("Profile", ["quiet", "balanced", "deep"], "quiet") == "quiet"
+
+
+def test_strong_confirmation_requires_exact_phrase():
+    session = session_with_answers(["i understand the risk"])
+    assert session.ask_strong_confirmation() is False
+    session = session_with_answers(["I UNDERSTAND THE RISK"])
+    assert session.ask_strong_confirmation() is True
+
+
+def test_ask_filters_records_status_and_repeated_noise_choices():
+    session = session_with_answers(["", "n", "", "oui", "non"])
+    filters = session.ask_filters()
+
+    assert filters["ignore_status"] == [404]
+    assert filters["auto_filter_repeated_sizes"] is True
+    assert filters["auto_filter_repeated_words"] is True
+    assert filters["auto_filter_repeated_lines"] is False
+    assert filters["continue_if_waf_detected"] is False

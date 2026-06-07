@@ -1,4 +1,4 @@
-from core.scoring import score_endpoint, score_idor, score_xss
+from core.scoring import score_endpoint, score_exploitdb_match, score_idor, score_xss
 from core.models import HTTPResult
 from modules.content_discovery import matches_baseline
 
@@ -40,3 +40,37 @@ def test_baseline_filtering_matches_signature():
     )
     baseline = [{"signature": [404, 120, 10, 3, "abc"]}]
     assert matches_baseline(result, baseline) is True
+
+
+def test_exploitdb_scoring_rewards_exact_version_and_cve():
+    result = score_exploitdb_match(
+        {"technology": "keycloak", "vulnerability_class": "open_redirect"},
+        {
+            "exploitdb_matches": 2,
+            "version_exact": True,
+            "cves": ["CVE-2023-0000"],
+            "endpoint_compatible": True,
+            "matched_patterns": ["realms", "openid-connect"],
+        },
+    )
+
+    assert result.score >= 10
+    assert result.category == "cve_match"
+    assert "exact version" in result.reason
+    assert "do not execute PoCs" in result.next_step
+
+
+def test_exploitdb_scoring_downranks_dangerous_nominal_quiet_match():
+    result = score_exploitdb_match(
+        {"technology": "example"},
+        {
+            "exploitdb_matches": 1,
+            "version_unknown": True,
+            "quiet_dangerous_penalty": True,
+            "nominal_only": True,
+            "active_validation_not_allowed": True,
+        },
+    )
+
+    assert result.score == 0
+    assert "DoS/shellcode/local exploit" in result.reason
