@@ -9,11 +9,16 @@ from bs4 import BeautifulSoup
 
 from core.knowledge_loader import KnowledgeLoader
 from core.models import Finding
+from core.result import Endpoint
 from core.scoring import score_exploitdb_match
-from core.utils import resolve_url
+from core.utils import mask_secret, resolve_url
 
 ABSOLUTE_URL_RE = re.compile(r"https?://[a-zA-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
 PATH_RE = re.compile(r"(?P<quote>['\"])(/[a-zA-Z0-9._~:/?#\[\]@!$&()*+,;=%-]{2,})(?P=quote)")
+FETCH_RE = re.compile(r"\bfetch\(\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+AXIOS_RE = re.compile(r"\baxios\.(?:get|post|put|delete|patch)\(\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+XHR_RE = re.compile(r"\.open\(\s*['\"](?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)['\"]\s*,\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+WINDOW_URL_RE = re.compile(r"window\.[A-Z0-9_]*URL[A-Z0-9_]*\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
 JWT_RE = re.compile(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}")
 API_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|client_secret)\s*[:=]\s*['\"][^'\"]{8,}['\"]")
 HISTORICAL_PATH_MARKERS = ("admin", "upload", "file", "download", "debug", "actuator", "openapi", "swagger", "graphql", "realms", "openid-connect")
@@ -69,8 +74,9 @@ def analyze_javascript(context, js_files: list[str] | None = None) -> dict[str, 
         for absolute in ABSOLUTE_URL_RE.findall(body):
             if scope.is_allowed_url(absolute):
                 endpoints.add(absolute)
-        for match in PATH_RE.finditer(body):
-            path = match.group(2)
+        candidate_paths = [match.group(2) for match in PATH_RE.finditer(body)]
+        candidate_paths.extend(match.group(1) for regex in (FETCH_RE, AXIOS_RE, XHR_RE, WINDOW_URL_RE) for match in regex.finditer(body))
+        for path in candidate_paths:
             if any(token in path for token in ("/api", "/v1/", "/v2/", "/admin", "/internal", "/private")):
                 endpoints.add(resolve_url(js_url, path))
         for keyword in keywords:
@@ -100,13 +106,14 @@ def analyze_javascript(context, js_files: list[str] | None = None) -> dict[str, 
                 )
         risky_matches = JWT_RE.findall(body) + API_KEY_RE.findall(body)
         if risky_matches:
+            previews = [mask_secret(match if isinstance(match, str) else str(match)) for match in risky_matches[:5]]
             findings.append(
                 Finding(
                     title="Secret potentiel dans JavaScript public",
                     severity="medium",
                     endpoint=js_url,
                     description="Un motif sensible potentiel a ete detecte dans un fichier JavaScript public. Ne pas l'utiliser, valider manuellement.",
-                    proof=f"{len(risky_matches)} motif(s) potentiel(s), hash {result.body_hash}",
+                    proof=f"{len(risky_matches)} motif(s) potentiel(s), previews={previews}, hash {result.body_hash}",
                     curl_command=result.curl_command,
                     score=5,
                     tags=["js", "secret-potential"],
@@ -128,10 +135,23 @@ def analyze_javascript(context, js_files: list[str] | None = None) -> dict[str, 
 
     for endpoint in sorted(endpoints):
         storage.append_line("js_endpoints.txt", endpoint)
+        storage.append_jsonl("js_endpoints.jsonl", {"url": endpoint, "source": "js", "type": classify_js_endpoint(endpoint)})
+        storage.save_endpoint(Endpoint(endpoint, classify_js_endpoint(endpoint), "js").to_dict())
     storage.write_json("js_exploitdb_patterns.json", exploitdb_pattern_hits)
     storage.write_text("js_findings.md", render_js_markdown(files, endpoints, keyword_hits, findings))
     storage.save_findings(findings)
     return {"js_files": sorted(files), "endpoints": sorted(endpoints), "keyword_hits": keyword_hits}
+
+
+def classify_js_endpoint(url: str) -> str:
+    lower = url.lower()
+    if any(token in lower for token in ("/api", "/graphql", "/v1/", "/v2/")):
+        return "api"
+    if any(token in lower for token in ("/oauth", "/openid", "redirect_uri", "/login")):
+        return "auth"
+    if any(lower.endswith(ext) for ext in (".js", ".map", ".css", ".png", ".svg")):
+        return "static"
+    return "web"
 
 
 def detect_exploitdb_js_patterns(js_url: str, body: str, patterns: dict) -> list[dict]:

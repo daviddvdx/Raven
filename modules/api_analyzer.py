@@ -6,6 +6,7 @@ from urllib.parse import parse_qsl, urlparse
 
 from core.knowledge_loader import KnowledgeLoader
 from core.models import Finding
+from core.result import Endpoint
 from core.scoring import score_exploitdb_match
 from core.utils import resolve_url
 
@@ -70,6 +71,7 @@ def run_api(context) -> list[Finding]:
                 )
             )
             storage.append_line("api_endpoints.txt", url)
+            storage.save_endpoint(Endpoint(url, "api", "api-analyzer", method="GET", tags=enrichment.get("endpoint_risk_tags", [])).to_dict())
     storage.write_json("api_exploitdb_patterns.json", endpoint_enrichment)
     storage.write_json("api_results.json", [finding.to_dict() for finding in findings])
     storage.save_findings(findings)

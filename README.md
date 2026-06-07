@@ -91,10 +91,21 @@ RAVEN ralentit ou met en pause si des signaux 403, 429, 503, timeouts ou WAF/CDN
 
 ```bash
 python3 main.py init --project example
-python3 main.py scan --scope config/scope.yaml --target https://example.com --profile quiet
-python3 main.py crawl --scope config/scope.yaml --target https://example.com --depth 2 --profile quiet
-python3 main.py js --scope config/scope.yaml --target https://example.com --profile quiet
+python3 main.py doctor
+python3 main.py scan --scope config/scope.yaml --profile passive
+python3 main.py scan --scope config/scope.yaml --target https://example.com --profile balanced
+python3 main.py recon --scope config/scope.yaml --profile passive
+python3 main.py crawl --scope config/scope.yaml --target https://example.com --depth 2 --profile passive
+python3 main.py js --scope config/scope.yaml --target https://example.com --profile passive
 ```
+
+Profils CLI modernes :
+
+- `passive` : reconnaissance douce, faible concurrence, pas de fuzzing bruyant.
+- `balanced` : ajoute de la discovery controlee avec calibration.
+- `active-safe` : checks actifs non destructifs, sans POST/PUT/PATCH/DELETE par defaut.
+
+Les anciens profils `quiet`, `balanced`, `deep` restent acceptes pour compatibilite.
 
 Fuzzing controle avec calibration active par defaut :
 
@@ -102,7 +113,16 @@ Fuzzing controle avec calibration active par defaut :
 python3 main.py fuzz \
   --scope config/scope.yaml \
   --target https://example.com/FUZZ \
-  --profile quiet
+  --profile passive
+```
+
+Alias plus lisible :
+
+```bash
+python3 main.py discover \
+  --scope config/scope.yaml \
+  --target https://example.com/FUZZ \
+  --profile passive
 ```
 
 Options utiles :
@@ -143,6 +163,11 @@ Rapport :
 
 ```bash
 python3 main.py report --project example --format markdown
+python3 main.py show --project example
+python3 main.py findings --project example --severity medium
+python3 main.py endpoints --project example --type api
+python3 main.py export --project example --format markdown
+python3 main.py resume --run-id <run_id>
 ```
 
 Apres installation comme console script, l'objectif est :
@@ -181,6 +206,11 @@ RAVEN ecrit dans `results/<project>/` :
 - `findings.json`
 - `findings.md`
 - `reports/report.md`
+- `endpoints.jsonl`
+- `raw/http_results.jsonl`
+- `raven.sqlite3`
+
+Les commandes `show`, `findings`, `endpoints` et `export` relisent ces fichiers locaux et ne lancent aucune requete reseau.
 
 ## Limites de securite
 

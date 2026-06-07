@@ -1,9 +1,84 @@
+user_agent: "RAVEN/0.1.0-dev authorized-bugbounty"
+headers:
+  Accept: "*/*"
+  User-Agent: "RAVEN/0.1.0-dev authorized-bugbounty"
 timeout: 10
-threads: 5
-follow_redirects: false
 retries: 1
+max_concurrency: 3
+rate_limit_per_second: 1
+threads: 3
+follow_redirects: false
+respect_robots: false
 output_format: "json"
 safe_mode: true
+
+proxy:
+  enabled: false
+  url: "http://127.0.0.1:8080"
+
+content_discovery:
+  extensions:
+    - ".js"
+    - ".css"
+    - ".map"
+    - ".json"
+    - ".txt"
+    - ".html"
+    - ".svg"
+    - ".png"
+    - ".woff"
+  filter_status:
+    - 403
+    - 404
+  filter_sizes: []
+  filter_keywords:
+    - "not found"
+    - "page not found"
+  calibration_samples: 5
+  recursive: false
+
+profiles:
+  passive:
+    modules:
+      - recon
+      - crawl
+      - js
+      - api
+      - report
+    rate_limit_per_second: 1
+    max_concurrency: 1
+    timeout: 12
+    safe_mode: true
+  balanced:
+    modules:
+      - recon
+      - crawl
+      - js
+      - discover
+      - api
+      - cors
+      - report
+    rate_limit_per_second: 2
+    max_concurrency: 3
+    timeout: 10
+    safe_mode: true
+  active-safe:
+    modules:
+      - recon
+      - crawl
+      - js
+      - discover
+      - api
+      - cors
+      - oauth
+      - graphql
+      - normalize
+      - report
+    rate_limit_per_second: 3
+    max_concurrency: 5
+    timeout: 8
+    safe_mode: true
+    allow_state_changing_methods: false
 
 seclists:
   enabled: true

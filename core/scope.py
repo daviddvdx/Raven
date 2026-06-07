@@ -24,6 +24,12 @@ class Scope:
     rate_limit: dict
     headers: dict[str, str]
     proxy: dict
+    allowed_paths: list[str] | None = None
+    denied_paths: list[str] | None = None
+    allowed_methods: list[str] | None = None
+    max_depth: int = 2
+    notes: str = ""
+    bug_bounty_handle: str = ""
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Scope":
@@ -33,15 +39,25 @@ class Scope:
         if not scope_path.exists():
             raise ScopeError(f"Fichier de scope introuvable: {scope_path}")
         data = yaml.safe_load(scope_path.read_text(encoding="utf-8")) or {}
+        allowed_domains = list(data.get("allowed_domains", data.get("in_scope_domains", [])))
+        deny = list(data.get("deny", data.get("out_of_scope_domains", [])))
+        denied_paths = list(data.get("denied_paths", []))
+        deny.extend(denied_paths)
         return cls(
-            program=str(data.get("program", "RAVEN Project")),
-            researcher=str(data.get("researcher", "")),
-            allowed_domains=list(data.get("allowed_domains", [])),
+            program=str(data.get("program", data.get("program_name", "RAVEN Project"))),
+            researcher=str(data.get("researcher", data.get("bug_bounty_handle", ""))),
+            allowed_domains=allowed_domains,
             allowed_urls=list(data.get("allowed_urls", [])),
-            deny=list(data.get("deny", [])),
+            deny=deny,
             rate_limit=dict(data.get("rate_limit", {"requests_per_second": 2, "burst": 3})),
             headers=dict(data.get("headers", {})),
             proxy=dict(data.get("proxy", {"enabled": False, "url": ""})),
+            allowed_paths=list(data.get("allowed_paths", [])),
+            denied_paths=denied_paths,
+            allowed_methods=list(data.get("allowed_methods", ["GET", "HEAD", "OPTIONS"])),
+            max_depth=int(data.get("max_depth", 2)),
+            notes=str(data.get("notes", "")),
+            bug_bounty_handle=str(data.get("bug_bounty_handle", "")),
         )
 
     def validate_url(self, target: str) -> None:
@@ -51,6 +67,10 @@ class Scope:
             raise ScopeError(f"Cible invalide: {target}")
         if self._is_denied(host, target):
             raise ScopeError(f"Cible refusee par le scope deny: {target}")
+        if self.denied_paths and any(parsed.path.startswith(path) for path in self.denied_paths):
+            raise ScopeError(f"Chemin refuse par le scope: {target}")
+        if self.allowed_paths and not any(parsed.path.startswith(path) for path in self.allowed_paths):
+            raise ScopeError(f"Chemin hors allowed_paths: {target}")
         if self._is_private_ip(host) and host not in self.allowed_domains:
             raise ScopeError(f"IP privee bloquee car non explicitement autorisee: {host}")
         if self._url_allowed(target) or self._domain_allowed(host):
@@ -69,6 +89,10 @@ class Scope:
             return float(self.rate_limit.get("requests_per_second", default))
         except (TypeError, ValueError):
             return default
+
+    def is_method_allowed(self, method: str) -> bool:
+        methods = self.allowed_methods or ["GET", "HEAD", "OPTIONS"]
+        return method.upper() in {item.upper() for item in methods}
 
     def _url_allowed(self, target: str) -> bool:
         normalized = target.rstrip("/")

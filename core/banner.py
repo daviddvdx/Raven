@@ -15,12 +15,11 @@ DESCRIPTION = "Reconnaissance & API Vulnerability Enumeration Navigator"
 console = Console()
 
 ASCII_BANNER = r"""
-██████╗  █████╗ ██╗   ██╗███████╗███╗   ██╗
-██╔══██╗██╔══██╗██║   ██║██╔════╝████╗  ██║
-██████╔╝███████║██║   ██║█████╗  ██╔██╗ ██║
-██╔══██╗██╔══██║╚██╗ ██╔╝██╔══╝  ██║╚██╗██║
-██║  ██║██║  ██║ ╚████╔╝ ███████╗██║ ╚████║
-╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝
+ ____      _     __     __ _____  _   _
+|  _ \    / \    \ \   / /| ____|| \ | |
+| |_) |  / _ \    \ \ / / |  _|  |  \| |
+|  _ <  / ___ \    \ V /  | |___ | |\  |
+|_| \_\/_/   \_\    \_/   |_____||_| \_|
 """
 
 
@@ -28,7 +27,7 @@ def print_banner(mode: str | None = None) -> None:
     console.print(ASCII_BANNER, style="bold cyan")
     console.print(f"        [bold]{DESCRIPTION}[/bold]")
     console.print(f"        [dim]v{VERSION}[/dim]\n")
-    console.rule(style="dim")
+    console.print("-" * 72, style="dim")
     if mode:
         console.print(f"[dim]:: Mode[/dim]              : [bold]{mode.upper()}[/bold]")
 
@@ -43,12 +42,12 @@ def print_run_config(config: Mapping[str, Any]) -> None:
         rendered = ", ".join(str(item) for item in value) if isinstance(value, (list, tuple, set)) else str(value)
         table.add_row(f":: {key}", f": {rendered}")
     console.print(table)
-    console.rule(style="dim")
+    console.print("-" * 72, style="dim")
     console.print()
 
 
 def print_section(title: str) -> None:
-    console.rule(f"[bold cyan]{title}[/bold cyan]", style="dim")
+    console.print(f"\n--- {title} " + "-" * max(1, 64 - len(title)), style="bold cyan")
 
 
 def print_success(message: str) -> None:

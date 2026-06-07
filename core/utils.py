@@ -45,6 +45,15 @@ def detect_technologies(headers: dict[str, str], body: str = "") -> list[str]:
         "wordpress": "WordPress",
         "django": "Django",
         "laravel": "Laravel",
+        "angular": "Angular",
+        "nuxt": "Nuxt",
+        "vite": "Vite",
+        "webpack": "Webpack",
+        "keycloak": "Keycloak",
+        "amazon api gateway": "API Gateway",
+        "x-amzn-requestid": "API Gateway",
+        "istio": "Istio",
+        "envoy": "Envoy",
     }
     for marker, label in markers.items():
         if marker in marker_text:
@@ -54,6 +63,15 @@ def detect_technologies(headers: dict[str, str], body: str = "") -> list[str]:
     if "x-cache" in lower_headers:
         found.add("Cache")
     return sorted(found)
+
+
+def mask_secret(value: str, visible: int = 4) -> str:
+    if not value:
+        return ""
+    compact = str(value)
+    if len(compact) <= visible * 2:
+        return "*" * len(compact)
+    return f"{compact[:visible]}...{compact[-visible:]}"
 
 
 def parse_csv(value: str | None) -> list[str]:

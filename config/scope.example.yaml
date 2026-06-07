@@ -1,6 +1,11 @@
 program: "Example Bug Bounty"
+program_name: "Example Bug Bounty"
 researcher: "Daviddvdx"
+bug_bounty_handle: "your-handle"
 allowed_domains:
+  - "example.com"
+  - "*.example.com"
+in_scope_domains:
   - "example.com"
   - "*.example.com"
 allowed_urls:
@@ -9,6 +14,22 @@ allowed_urls:
 deny:
   - "admin-prod.example.com"
   - "payments.example.com"
+out_of_scope_domains:
+  - "admin-prod.example.com"
+  - "payments.example.com"
+allowed_paths:
+  - "/"
+denied_paths:
+  - "/logout"
+  - "/delete"
+  - "/payments"
+allowed_methods:
+  - "GET"
+  - "HEAD"
+  - "OPTIONS"
+max_depth: 2
+notes: "Replace this example with the exact public Bug Bounty scope before scanning."
+user_agent_suffix: "your-handle-authorized-research"
 rate_limit:
   requests_per_second: 2
   burst: 3

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+import csv
+import json
+from io import StringIO
+from uuid import uuid4
 
 import typer
 import yaml
 
 from core.banner import print_banner, print_error, print_run_config, print_section, print_success, print_warning
+from core.config import load_settings as load_raven_settings, normalize_profile, validate_settings
 from core.exploitdb_manager import ExploitDBManager
 from core.http_client import HTTPClient
 from core.interactive import InteractiveSession
@@ -36,7 +41,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-VALID_PROFILES = {"quiet", "balanced", "deep"}
+VALID_PROFILES = {"passive", "balanced", "active-safe", "quiet", "deep"}
 
 
 def load_settings(path: str = "config/settings.yaml") -> dict:
@@ -73,11 +78,14 @@ def build_context(
     verify_tls: bool = True,
 ):
     if profile not in VALID_PROFILES:
-        print_error(f"Profil invalide: {profile}. Utilise quiet, balanced ou deep.")
+        print_error(f"Profil invalide: {profile}. Utilise passive, balanced, active-safe, quiet ou deep.")
         raise typer.Exit(1)
+    cli_profile = profile
+    profile = normalize_profile(profile)
     if profile == "deep" and not confirm_deep:
         print_error("Le profil deep exige une confirmation explicite avec --confirm-deep.")
         raise typer.Exit(1)
+    raven_settings = load_raven_settings()
     profile_config = get_noise_profile(profile)
     if timeout == 10.0:
         timeout = float(profile_config["timeout"])
@@ -91,23 +99,28 @@ def build_context(
         raise typer.Exit(1) from exc
 
     project_name = slugify(project) if project else project_from_target(target)
+    run_id = uuid4().hex[:12]
     storage = Storage(project_name)
     logger = Logger()
     noise_guard = NoiseGuard(profile, logger=logger)
-    rate_limiter = RateLimiter(min(scope.requests_per_second(), float(profile_config["requests_per_second"])))
-    proxy = scope.proxy.get("url") if scope.proxy.get("enabled") else None
+    settings_rate = raven_settings.profile(cli_profile).get("rate_limit_per_second", raven_settings.rate_limit_per_second)
+    rate_limiter = RateLimiter(min(scope.requests_per_second(), float(profile_config["requests_per_second"]), float(settings_rate)))
+    proxy_config = scope.proxy if scope.proxy.get("enabled") else raven_settings.proxy
+    proxy = proxy_config.get("url") if proxy_config.get("enabled") else None
+    headers = {**raven_settings.headers, **scope.headers}
     http_client = HTTPClient(
         timeout=timeout,
-        headers=scope.headers,
+        headers=headers,
         follow_redirects=follow_redirects,
         proxy=proxy,
-        retries=1,
+        retries=min(int(raven_settings.retries), 2),
         rate_limiter=rate_limiter,
         storage=storage,
         noise_guard=noise_guard,
         verify_tls=verify_tls,
     )
     config = {
+        "Run ID": run_id,
         "Target": target,
         "Scope": scope_path,
         "Output file": output_file or f"results/{project_name}",
@@ -117,7 +130,9 @@ def build_context(
         "Timeout": timeout,
         "Threads": threads,
         "Rate limit": f"{rate_limiter.requests_per_second} req/s",
-        "Profile": profile,
+        "Profile": cli_profile,
+        "Noise profile": profile,
+        "Modules": ", ".join(raven_settings.profile(cli_profile).get("modules", ["recon"])),
         "Proxy": proxy or "disabled",
         "TLS verify": str(verify_tls).lower(),
     }
@@ -128,6 +143,7 @@ def build_context(
     print_run_config(config)
     return {
         "project": project_name,
+        "run_id": run_id,
         "target": target,
         "scope": scope,
         "config": config,
@@ -136,7 +152,8 @@ def build_context(
         "logger": logger,
         "rate_limiter": rate_limiter,
         "noise_guard": noise_guard,
-        "profile": profile,
+        "profile": cli_profile,
+        "noise_profile": profile,
         "threads": threads,
     }
 
@@ -157,19 +174,46 @@ def init(project: str = typer.Option(..., "--project", help="Project name to ini
 @app.command()
 def scan(
     scope: str = typer.Option(..., "--scope", help="Scope YAML file."),
-    target: str = typer.Option(..., "--target", help="Target URL."),
+    target: Optional[str] = typer.Option(None, "--target", help="Target URL. If omitted, first allowed URL/domain from scope is used."),
     timeout: float = typer.Option(10.0, "--timeout"),
     threads: int = typer.Option(5, "--threads"),
     follow_redirects: bool = typer.Option(False, "--follow-redirects"),
     insecure: bool = typer.Option(False, "--insecure", help="Disable TLS certificate verification for authorized labs/CTFs."),
     project: Optional[str] = typer.Option(None, "--project"),
-    profile: str = typer.Option("quiet", "--profile"),
+    profile: str = typer.Option("passive", "--profile"),
     confirm_deep: bool = typer.Option(False, "--confirm-deep"),
 ) -> None:
+    if target is None:
+        try:
+            target = target_from_scope(Scope.from_file(scope))
+        except ScopeError as exc:
+            print_error(str(exc))
+            raise typer.Exit(1) from exc
     context = build_context("scan", scope, target, project, timeout, threads, follow_redirects, "results/<project>/recon_results.json", profile=profile, confirm_deep=confirm_deep, verify_tls=not insecure)
     findings = run_recon(context)
-    print_success(f"{len(findings)} finding(s) ecrit(s) dans results/{context['project']}")
+    print_success(f"{len(findings)} finding(s) ecrit(s) dans results/{context['project']} | run_id={context['run_id']}")
     context["http_client"].close()
+
+
+@app.command()
+def recon(
+    scope: str = typer.Option(..., "--scope"),
+    target: Optional[str] = typer.Option(None, "--target"),
+    profile: str = typer.Option("passive", "--profile"),
+    project: Optional[str] = typer.Option(None, "--project"),
+) -> None:
+    """Alias low-noise for raven scan/reconnaissance."""
+    scan(
+        scope=scope,
+        target=target,
+        timeout=10.0,
+        threads=5,
+        follow_redirects=False,
+        insecure=False,
+        project=project,
+        profile=profile,
+        confirm_deep=False,
+    )
 
 
 @app.command()
@@ -276,6 +320,41 @@ def fuzz(
     )
     print_success(f"Fuzz termine: {len(findings)} resultat(s) retenu(s).")
     context["http_client"].close()
+
+
+@app.command()
+def discover(
+    scope: str = typer.Option(..., "--scope"),
+    target: str = typer.Option(..., "--target", help="Use FUZZ as insertion point."),
+    profile: str = typer.Option("passive", "--profile"),
+    wordlist: Optional[str] = typer.Option(None, "--wordlist"),
+    extensions: str = typer.Option(",".join(DEFAULT_EXTENSIONS), "--extensions"),
+    project: Optional[str] = typer.Option(None, "--project"),
+) -> None:
+    """Low-noise content discovery alias for fuzz."""
+    fuzz(
+        scope=scope,
+        target=target,
+        profile=profile,
+        wordlist=wordlist,
+        extensions=extensions,
+        filter_status="403,404",
+        filter_size=None,
+        filter_words=None,
+        filter_lines=None,
+        filter_regex=None,
+        match_status="200,204,301,302,307,308,401",
+        match_regex=None,
+        calibrate=True,
+        ignore_baseline=False,
+        exploitdb_prioritize=True,
+        timeout=10.0,
+        threads=3,
+        rate_limit=None,
+        follow_redirects=False,
+        project=project,
+        confirm_deep=False,
+    )
 
 
 @app.command()
@@ -664,6 +743,192 @@ def report(
     path = generate_report(context, format)
     print_section("Report")
     print_success(f"Report generated: {path}")
+
+
+@app.command()
+def doctor() -> None:
+    """Check local configuration and optional tool integrations without scanning."""
+    settings = load_raven_settings()
+    print_banner("doctor")
+    print_run_config(
+        {
+            "Safe mode": settings.safe_mode,
+            "Timeout": settings.timeout,
+            "Retries": settings.retries,
+            "Max concurrency": settings.max_concurrency,
+            "Rate limit": f"{settings.rate_limit_per_second} req/s",
+            "Proxy": settings.proxy.get("url") if settings.proxy.get("enabled") else "disabled",
+        }
+    )
+    for warning in validate_settings(settings):
+        print_warning(warning)
+    manager = WordlistManager()
+    wordlist_status = manager.status("quiet")
+    print_success(f"SecLists: {'detected' if wordlist_status.seclists_detected else 'fallback wordlists'}")
+    exploit_status = ExploitDBManager().get_status()
+    print_success(f"Exploit-DB: {'detected' if exploit_status.detected else 'not detected'} ({exploit_status.entries_count} entries)")
+    print_success("Doctor finished without active network scan.")
+
+
+@app.command()
+def show(
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    project: Optional[str] = typer.Option(None, "--project"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Show a compact run summary from saved local results."""
+    storage = storage_from_selector(project, run_id)
+    print_banner("show")
+    run_config = load_result_json(storage.path("run_config.json"))
+    findings = load_result_json(storage.path("findings.json"))
+    endpoints = storage.read_jsonl("endpoints.jsonl")
+    print_run_config(
+        {
+            "Project": storage.project,
+            "Run ID": run_config.get("Run ID", "n/a") if isinstance(run_config, dict) else "n/a",
+            "Target": run_config.get("Target", "n/a") if isinstance(run_config, dict) else "n/a",
+            "Findings": len(findings) if isinstance(findings, list) else 0,
+            "Endpoints": len(endpoints),
+            "Output": str(storage.root),
+        }
+    )
+    print_section("Top findings")
+    for finding in (findings if isinstance(findings, list) else [])[:limit]:
+        typer.echo(f"[{finding.get('score', 0)}][{finding.get('severity', 'info')}] {finding.get('title')} - {finding.get('endpoint')}")
+
+
+@app.command()
+def findings(
+    severity: Optional[str] = typer.Option(None, "--severity"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    project: Optional[str] = typer.Option(None, "--project"),
+    limit: int = typer.Option(50, "--limit"),
+) -> None:
+    """List saved findings, optionally filtered by severity."""
+    storage = storage_from_selector(project, run_id)
+    rows = load_result_json(storage.path("findings.json"))
+    rows = rows if isinstance(rows, list) else []
+    if severity:
+        rows = [row for row in rows if row.get("severity") == severity]
+    print_banner("findings")
+    print_run_config({"Project": storage.project, "Severity": severity or "all", "Limit": limit})
+    for row in rows[:limit]:
+        typer.echo(f"[{row.get('score', 0)}][{row.get('confidence', 'low')}] {row.get('severity')} | {row.get('title')} | {row.get('endpoint')}")
+
+
+@app.command()
+def endpoints(
+    endpoint_type: Optional[str] = typer.Option(None, "--type"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    project: Optional[str] = typer.Option(None, "--project"),
+    limit: int = typer.Option(100, "--limit"),
+) -> None:
+    """List discovered endpoints from JSONL/legacy text outputs."""
+    storage = storage_from_selector(project, run_id)
+    rows = storage.read_jsonl("endpoints.jsonl")
+    if not rows:
+        rows = [{"url": line, "type": classify_endpoint(line), "source": "legacy"} for line in load_result_lines(storage.path("urls.txt"))]
+    if endpoint_type:
+        rows = [row for row in rows if row.get("type") == endpoint_type]
+    print_banner("endpoints")
+    print_run_config({"Project": storage.project, "Type": endpoint_type or "all", "Limit": limit})
+    for row in rows[:limit]:
+        typer.echo(f"[{row.get('type', 'unknown')}] {row.get('url')}")
+
+
+@app.command()
+def export(
+    output_format: str = typer.Option("markdown", "--format", help="markdown, json or csv."),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    project: Optional[str] = typer.Option(None, "--project"),
+) -> None:
+    """Export saved findings without launching network activity."""
+    storage = storage_from_selector(project, run_id)
+    if output_format == "markdown":
+        path = generate_report({"project": storage.project, "storage": storage, "scope": None}, "markdown")
+    elif output_format == "json":
+        path = generate_report({"project": storage.project, "storage": storage, "scope": None}, "json")
+    elif output_format == "csv":
+        path = generate_report({"project": storage.project, "storage": storage, "scope": None}, "csv")
+    else:
+        print_error("Format invalide. Utilise markdown, json ou csv.")
+        raise typer.Exit(1)
+    print_success(f"Export generated: {path}")
+
+
+@app.command()
+def resume(run_id: str = typer.Option(..., "--run-id")) -> None:
+    """Locate a saved run and print the suggested next commands."""
+    storage = storage_from_selector(None, run_id)
+    run_config = load_result_json(storage.path("run_config.json"))
+    print_banner("resume")
+    print_run_config(
+        {
+            "Project": storage.project,
+            "Run ID": run_id,
+            "Target": run_config.get("Target", "n/a") if isinstance(run_config, dict) else "n/a",
+            "Output": str(storage.root),
+        }
+    )
+    print_section("Suggested local actions")
+    typer.echo(f"python main.py show --project {storage.project}")
+    typer.echo(f"python main.py report --project {storage.project} --format markdown")
+
+
+def storage_from_selector(project: str | None, run_id: str | None) -> Storage:
+    if project:
+        return Storage(slugify(project))
+    if run_id:
+        found = find_project_by_run_id(run_id)
+        if found:
+            return Storage(found)
+        print_error(f"run_id introuvable: {run_id}")
+        raise typer.Exit(1)
+    projects = sorted([path.name for path in Path("results").iterdir() if path.is_dir()]) if Path("results").exists() else []
+    if not projects:
+        print_error("Aucun resultat local trouve. Fournis --project ou --run-id.")
+        raise typer.Exit(1)
+    return Storage(projects[-1])
+
+
+def find_project_by_run_id(run_id: str) -> str | None:
+    results = Path("results")
+    if not results.exists():
+        return None
+    for path in results.iterdir():
+        config = path / "run_config.json"
+        if not config.exists():
+            continue
+        data = load_result_json(config)
+        if isinstance(data, dict) and data.get("Run ID") == run_id:
+            return path.name
+    return None
+
+
+def load_result_json(path: Path):
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+
+
+def load_result_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return path.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+
+def classify_endpoint(url: str) -> str:
+    lower = url.lower()
+    if any(token in lower for token in ("/api", "/graphql", "/v1/", "/v2/")):
+        return "api"
+    if any(lower.endswith(ext) for ext in (".js", ".css", ".png", ".svg", ".woff", ".map")):
+        return "static"
+    if any(token in lower for token in ("/login", "/oauth", "/openid", "/sso")):
+        return "auth"
+    return "web"
 
 
 if __name__ == "__main__":

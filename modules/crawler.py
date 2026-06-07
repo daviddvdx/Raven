@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 from collections import deque
+import re
 from urllib.parse import urldefrag, urlparse
 
 from bs4 import BeautifulSoup
 
+from core.result import Endpoint
 from core.models import Finding
 from core.utils import resolve_url
+
+
+INLINE_PATH_RE = re.compile(r"['\"](/(?:api|v1|v2|admin|internal|graphql)[^'\"]{1,160})['\"]", re.IGNORECASE)
+
+
+def classify_crawled_endpoint(url: str) -> str:
+    lower = url.lower()
+    if any(token in lower for token in ("/api", "/graphql", "/v1/", "/v2/")):
+        return "api"
+    if any(lower.endswith(ext) for ext in (".js", ".css", ".png", ".svg", ".woff", ".map")):
+        return "static"
+    if any(token in lower for token in ("/login", "/oauth", "/openid", "/sso")):
+        return "auth"
+    return "web"
 
 
 def crawl(context, depth: int = 2, max_pages: int = 100) -> dict[str, list[str]]:
@@ -33,18 +49,30 @@ def crawl(context, depth: int = 2, max_pages: int = 100) -> dict[str, list[str]]
         except Exception:
             continue
         storage.append_line("urls.txt", result.url)
+        storage.save_endpoint(Endpoint(result.url, classify_crawled_endpoint(result.url), "crawl", depth=current_depth).to_dict())
         urls.add(result.url)
         if "text/html" not in (result.content_type or ""):
             continue
         soup = BeautifulSoup(result.body_text or "", "html.parser")
         for form in soup.find_all("form"):
             action = form.get("action") or normalized
-            forms.append(resolve_url(normalized, action))
+            form_url = resolve_url(normalized, action)
+            forms.append(form_url)
+            if scope.is_allowed_url(form_url):
+                storage.save_endpoint(Endpoint(form_url, "form", "html-form", method=(form.get("method") or "GET").upper(), depth=current_depth).to_dict())
         for script in soup.find_all("script", src=True):
             js_url = resolve_url(normalized, script["src"])
             if scope.is_allowed_url(js_url):
                 js_files.add(js_url)
                 storage.append_line("js_files.txt", js_url)
+                storage.save_endpoint(Endpoint(js_url, "static", "script-src", depth=current_depth).to_dict())
+        for script in soup.find_all("script"):
+            for match in INLINE_PATH_RE.finditer(script.text or ""):
+                endpoint = resolve_url(normalized, match.group(1))
+                if scope.is_allowed_url(endpoint):
+                    urls.add(endpoint)
+                    storage.append_line("urls.txt", endpoint)
+                    storage.save_endpoint(Endpoint(endpoint, classify_crawled_endpoint(endpoint), "inline-js", depth=current_depth).to_dict())
         if current_depth >= depth:
             continue
         for tag in soup.find_all(["a", "link"], href=True):
