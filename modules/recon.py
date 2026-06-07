@@ -13,6 +13,8 @@ def run_recon(context) -> list[Finding]:
     result = http_client.get(target)
     if result.status_code == 0:
         storage.write_json("recon_results.json", [result.to_dict()])
+        print_section("Recon network error")
+        print_finding(0, target, 0, 0, 0, 0, "request failed")
         findings = [
             Finding(
                 title="Erreur HTTP pendant le scan",

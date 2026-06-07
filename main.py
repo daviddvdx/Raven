@@ -190,9 +190,47 @@ def scan(
             print_error(str(exc))
             raise typer.Exit(1) from exc
     context = build_context("scan", scope, target, project, timeout, threads, follow_redirects, "results/<project>/recon_results.json", profile=profile, confirm_deep=confirm_deep, verify_tls=not insecure)
-    findings = run_recon(context)
-    print_success(f"{len(findings)} finding(s) ecrit(s) dans results/{context['project']} | run_id={context['run_id']}")
+    module_results = run_scan_profile(context, profile)
+    total_findings = sum(item.get("findings", 0) for item in module_results)
+    print_section("Scan summary")
+    for item in module_results:
+        print_success(f"{item['module']}: {item['status']} ({item.get('findings', 0)} finding(s))")
+    print_success(f"{total_findings} finding(s) ecrit(s) dans results/{context['project']} | run_id={context['run_id']}")
     context["http_client"].close()
+
+
+def run_scan_profile(context: dict, profile: str) -> list[dict]:
+    """Run the safe module list declared for a scan profile."""
+    settings = load_raven_settings()
+    modules = settings.profile(profile).get("modules", ["recon"])
+    results: list[dict] = []
+    for module_name in modules:
+        try:
+            if module_name == "recon":
+                findings = run_recon(context)
+            elif module_name == "crawl":
+                findings = run_crawler(context, depth=min(int(context["scope"].max_depth), 2))
+            elif module_name == "js":
+                findings = run_js(context)
+            elif module_name == "api":
+                findings = run_api(context)
+            elif module_name == "discover":
+                findings = run_fuzz(context, wordlist="wordlists/small.txt", threads=min(2, int(context.get("threads", 1))), calibrate=True)
+            elif module_name == "cors":
+                findings = run_cors(context)
+            elif module_name == "report":
+                path = generate_report(context, "markdown")
+                results.append({"module": module_name, "status": f"ok -> {path}", "findings": 0})
+                continue
+            else:
+                results.append({"module": module_name, "status": "skipped unsupported in scan profile", "findings": 0})
+                continue
+            results.append({"module": module_name, "status": "ok", "findings": len(findings)})
+        except Exception as exc:
+            results.append({"module": module_name, "status": f"error: {exc}", "findings": 0})
+            print_warning(f"{module_name}: {exc}")
+    context["storage"].write_json("scan_modules.json", results)
+    return results
 
 
 @app.command()
