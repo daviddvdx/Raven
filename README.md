@@ -103,7 +103,7 @@ Profils CLI modernes :
 
 - `passive` : reconnaissance douce, faible concurrence, pas de fuzzing bruyant.
 - `balanced` : ajoute de la discovery controlee avec calibration.
-- `active-safe` : checks actifs non destructifs, sans POST/PUT/PATCH/DELETE par defaut.
+- `active-safe` : scan reseau plus pousse mais controle : crawl, JS, discovery calibree, API/CORS/OAuth/GraphQL safe, analyse formulaires, param-mining leger et payloads safe limites.
 
 Les anciens profils `quiet`, `balanced`, `deep` restent acceptes pour compatibilite.
 
@@ -189,12 +189,23 @@ python3 main.py resume --run-id <run_id>
 Scan actif safe sur les endpoints deja collectes :
 
 ```bash
+python3 main.py scan \
+  --scope config/scope.yaml \
+  --target https://example.com \
+  --profile active-safe
+```
+
+Ou en deux etapes, sur les endpoints deja collectes :
+
+```bash
 python3 main.py active \
   --input results/<run_id>/endpoints.jsonl \
   --payload-profile safe
 ```
 
 Le moteur actif safe utilise uniquement des marqueurs non destructifs : reflection marker, open redirect sur parametres cibles, erreurs SQL basiques sans time-based, SSTI basique, path traversal indicatif, type confusion JSON limitee. Il respecte le scope, les chemins interdits et les methodes autorisees.
+
+Pour autoriser les checks POST safe, le scope doit explicitement contenir `POST` dans `allowed_methods`. PUT/PATCH/DELETE restent desactives par defaut.
 
 Apres installation comme console script, l'objectif est :
 

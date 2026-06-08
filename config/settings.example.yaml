@@ -98,6 +98,9 @@ profiles:
       - cors
       - oauth
       - graphql
+      - forms
+      - param_miner
+      - active
       - normalize
       - report
     rate_limit_per_second: 3

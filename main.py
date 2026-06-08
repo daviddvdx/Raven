@@ -27,10 +27,13 @@ from modules.api_analyzer import run_api
 from modules.active_payloads import run_active_payloads
 from modules.content_discovery import DEFAULT_EXTENSIONS, DEFAULT_FILTER_STATUS, DEFAULT_MATCHERS, default_wordlist, run_fuzz
 from modules.cors_checker import run_cors
+from modules.form_analyzer import run_form_analyzer
 from modules.crawler import run_crawler
 from modules.graphql_analyzer import run_graphql
 from modules.idor_helper import load_endpoints, run_idor
 from modules.js_analyzer import run_js
+from modules.oauth_checker import run_oauth
+from modules.param_miner import mine_parameters
 from modules.path_normalizer import run_normalize
 from modules.recon import run_recon
 from modules.report_generator import generate_report
@@ -223,9 +226,39 @@ def run_scan_profile(context: dict, profile: str) -> list[dict]:
             elif module_name == "api":
                 findings = run_api(context)
             elif module_name == "discover":
-                findings = run_fuzz(context, wordlist="wordlists/small.txt", threads=min(2, int(context.get("threads", 1))), calibrate=True)
+                manager = WordlistManager()
+                wordlists = [str(item) for item in manager.select_wordlists("balanced", "web_content", allow_deep=False)]
+                findings = run_fuzz(
+                    context,
+                    wordlist=wordlists or "wordlists/small.txt",
+                    threads=min(3, int(context.get("threads", 1))),
+                    calibrate=True,
+                    exploitdb_prioritize=True,
+                )
             elif module_name == "cors":
                 findings = run_cors(context)
+            elif module_name == "oauth":
+                findings = run_oauth(context)
+            elif module_name == "graphql":
+                if context["scope"].is_method_allowed("POST"):
+                    findings = run_graphql(context)
+                else:
+                    results.append({"module": module_name, "status": "skipped POST not allowed by scope", "findings": 0})
+                    continue
+            elif module_name == "forms":
+                findings = run_form_analyzer(context)
+            elif module_name == "param_miner":
+                endpoints = collect_saved_endpoints(context)
+                findings = mine_parameters(context, endpoints, max_params=20)
+            elif module_name == "active":
+                endpoints = collect_saved_endpoints(context)
+                findings = run_active_payloads(
+                    context,
+                    endpoints,
+                    payload_profile="safe",
+                    max_payloads_per_param=int(settings.profile(profile).get("max_payloads_per_param", 5)),
+                    allow_post_tests=bool(settings.profile(profile).get("allow_post_tests", False)),
+                )
             elif module_name == "report":
                 path = generate_report(context, "markdown")
                 results.append({"module": module_name, "status": f"ok -> {path}", "findings": 0})
@@ -239,6 +272,28 @@ def run_scan_profile(context: dict, profile: str) -> list[dict]:
             print_warning(f"{module_name}: {exc}")
     context["storage"].write_json("scan_modules.json", results)
     return results
+
+
+def collect_saved_endpoints(context: dict) -> list[dict]:
+    storage = context["storage"]
+    rows = storage.read_jsonl("endpoints.jsonl")
+    if not rows:
+        rows = [{"url": context["target"], "method": "GET", "type": classify_endpoint(context["target"]), "source": "target"}]
+    clean: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        url = row.get("url")
+        method = str(row.get("method", "GET")).upper()
+        if not url:
+            continue
+        key = (url, method)
+        if key in seen:
+            continue
+        seen.add(key)
+        row.setdefault("type", classify_endpoint(url))
+        row["method"] = method
+        clean.append(row)
+    return clean[:200]
 
 
 @app.command()
