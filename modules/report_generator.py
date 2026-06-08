@@ -54,7 +54,19 @@ def generate_report(context, output_format: str = "markdown") -> str:
     markdown = render_markdown(context, findings)
     path = storage.write_text("findings.md", markdown)
     storage.write_text("reports/report.md", markdown)
+    storage.write_json("reports/report.json", {"findings": findings, "summary": {"findings_count": len(findings)}})
+    storage.write_text("reports/findings.csv", render_findings_csv(findings))
     return str(path)
+
+
+def render_findings_csv(findings: list[dict]) -> str:
+    buffer = StringIO()
+    fieldnames = ["title", "severity", "confidence", "endpoint", "category", "score", "reason", "evidence", "recommendation"]
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for finding in findings:
+        writer.writerow({key: finding.get(key, "") for key in fieldnames})
+    return buffer.getvalue()
 
 
 def render_markdown(context, findings: list[dict]) -> str:

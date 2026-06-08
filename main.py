@@ -24,6 +24,7 @@ from core.utils import parse_int_csv, project_from_target, slugify
 from core.workflow import WorkflowManager
 from core.wordlist_manager import WordlistManager
 from modules.api_analyzer import run_api
+from modules.active_payloads import run_active_payloads
 from modules.content_discovery import DEFAULT_EXTENSIONS, DEFAULT_FILTER_STATUS, DEFAULT_MATCHERS, default_wordlist, run_fuzz
 from modules.cors_checker import run_cors
 from modules.crawler import run_crawler
@@ -76,6 +77,7 @@ def build_context(
     profile: str = "quiet",
     confirm_deep: bool = False,
     verify_tls: bool = True,
+    run_id_override: str | None = None,
 ):
     if profile not in VALID_PROFILES:
         print_error(f"Profil invalide: {profile}. Utilise passive, balanced, active-safe, quiet ou deep.")
@@ -99,8 +101,8 @@ def build_context(
         raise typer.Exit(1) from exc
 
     project_name = slugify(project) if project else project_from_target(target)
-    run_id = uuid4().hex[:12]
-    storage = Storage(project_name)
+    run_id = run_id_override or uuid4().hex[:12]
+    storage = Storage(run_id)
     logger = Logger()
     noise_guard = NoiseGuard(profile, logger=logger)
     settings_rate = raven_settings.profile(cli_profile).get("rate_limit_per_second", raven_settings.rate_limit_per_second)
@@ -118,12 +120,14 @@ def build_context(
         storage=storage,
         noise_guard=noise_guard,
         verify_tls=verify_tls,
+        scope=scope,
     )
     config = {
         "Run ID": run_id,
+        "Project": project_name,
         "Target": target,
         "Scope": scope_path,
-        "Output file": output_file or f"results/{project_name}",
+        "Output file": output_file or f"results/{run_id}",
         "File format": (extra_config or {}).get("File format", "json"),
         "Follow redirects": str(follow_redirects).lower(),
         "Calibration": (extra_config or {}).get("Calibration"),
@@ -139,6 +143,7 @@ def build_context(
     if extra_config:
         config.update(extra_config)
     storage.write_json("run_config.json", config)
+    storage.write_text("raven.log", f"RAVEN run {run_id} started for {target} with profile {cli_profile}\n")
     print_banner(mode)
     print_run_config(config)
     return {
@@ -195,7 +200,7 @@ def scan(
     print_section("Scan summary")
     for item in module_results:
         print_success(f"{item['module']}: {item['status']} ({item.get('findings', 0)} finding(s))")
-    print_success(f"{total_findings} finding(s) ecrit(s) dans results/{context['project']} | run_id={context['run_id']}")
+    print_success(f"{total_findings} finding(s) ecrit(s) dans {context['storage'].root} | run_id={context['run_id']}")
     context["http_client"].close()
 
 
@@ -257,7 +262,7 @@ def recon(
 @app.command()
 def crawl(
     scope: str = typer.Option(..., "--scope"),
-    target: str = typer.Option(..., "--target"),
+    target: str = typer.Option(..., "--target", "--url"),
     depth: int = typer.Option(2, "--depth"),
     timeout: float = typer.Option(10.0, "--timeout"),
     threads: int = typer.Option(5, "--threads"),
@@ -274,7 +279,7 @@ def crawl(
 @app.command()
 def js(
     scope: str = typer.Option(..., "--scope"),
-    target: str = typer.Option(..., "--target"),
+    target: str = typer.Option(..., "--target", "--url"),
     timeout: float = typer.Option(10.0, "--timeout"),
     threads: int = typer.Option(5, "--threads"),
     project: Optional[str] = typer.Option(None, "--project"),
@@ -363,7 +368,7 @@ def fuzz(
 @app.command()
 def discover(
     scope: str = typer.Option(..., "--scope"),
-    target: str = typer.Option(..., "--target", help="Use FUZZ as insertion point."),
+    target: str = typer.Option(..., "--target", "--url", help="Use FUZZ as insertion point."),
     profile: str = typer.Option("passive", "--profile"),
     wordlist: Optional[str] = typer.Option(None, "--wordlist"),
     extensions: str = typer.Option(",".join(DEFAULT_EXTENSIONS), "--extensions"),
@@ -398,13 +403,20 @@ def discover(
 @app.command()
 def api(
     scope: str = typer.Option(..., "--scope"),
-    target: str = typer.Option(..., "--target"),
+    target: Optional[str] = typer.Option(None, "--target"),
+    input_file: Optional[str] = typer.Option(None, "--input"),
     timeout: float = typer.Option(10.0, "--timeout"),
     threads: int = typer.Option(5, "--threads"),
     project: Optional[str] = typer.Option(None, "--project"),
     profile: str = typer.Option("quiet", "--profile"),
     confirm_deep: bool = typer.Option(False, "--confirm-deep"),
 ) -> None:
+    if input_file and not target:
+        endpoints_data = read_endpoint_input(input_file)
+        target = endpoints_data[0]["url"] if endpoints_data else None
+    if not target:
+        print_error("Fournis --target ou --input avec au moins un endpoint.")
+        raise typer.Exit(1)
     context = build_context("api", scope, target, project, timeout, threads, False, "results/<project>/api_results.json", profile=profile, confirm_deep=confirm_deep)
     findings = run_api(context)
     print_success(f"API checks termines: {len(findings)} finding(s).")
@@ -729,6 +741,50 @@ def xss(
 
 
 @app.command()
+def active(
+    input_file: str = typer.Option(..., "--input", help="Path to endpoints.jsonl."),
+    payload_profile: str = typer.Option("safe", "--payload-profile"),
+    scope: Optional[str] = typer.Option(None, "--scope"),
+    max_payloads_per_param: int = typer.Option(5, "--max-payloads-per-param"),
+    allow_post_tests: bool = typer.Option(False, "--allow-post-tests"),
+    timeout: float = typer.Option(10.0, "--timeout"),
+    profile: str = typer.Option("active-safe", "--profile"),
+) -> None:
+    endpoints_data = read_endpoint_input(input_file)
+    if not endpoints_data:
+        print_error(f"Aucun endpoint lisible dans {input_file}")
+        raise typer.Exit(1)
+    inferred_scope = scope or infer_scope_from_input(input_file)
+    if not inferred_scope:
+        print_error("Scope obligatoire pour active. Fournis --scope ou utilise un endpoints.jsonl dans results/<run_id>/ avec run_config.json.")
+        raise typer.Exit(1)
+    target = endpoints_data[0]["url"]
+    run_id = infer_run_id_from_input(input_file)
+    context = build_context(
+        "active",
+        inferred_scope,
+        target,
+        timeout=timeout,
+        threads=1,
+        follow_redirects=False,
+        output_file=f"results/{run_id or '<run_id>'}/active_findings.jsonl",
+        extra_config={"Payload profile": payload_profile, "Max payloads per param": max_payloads_per_param, "Allow POST tests": allow_post_tests},
+        profile=profile,
+        confirm_deep=True,
+        run_id_override=run_id,
+    )
+    findings = run_active_payloads(
+        context,
+        endpoints_data,
+        payload_profile=payload_profile,
+        max_payloads_per_param=max_payloads_per_param,
+        allow_post_tests=allow_post_tests,
+    )
+    print_success(f"Active safe termine: {len(findings)} finding(s). Rapport local: {context['storage'].root}")
+    context["http_client"].close()
+
+
+@app.command()
 def idor(
     scope: str = typer.Option(..., "--scope"),
     endpoints: str = typer.Option(..., "--endpoints"),
@@ -767,14 +823,14 @@ def idor(
 
 @app.command()
 def report(
-    project: str = typer.Option(..., "--project"),
+    project: Optional[str] = typer.Option(None, "--project"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
     format: str = typer.Option("markdown", "--format", help="markdown, json or csv."),
 ) -> None:
     print_banner("report")
-    project_name = slugify(project)
-    storage = Storage(project_name)
-    context = {"project": project_name, "storage": storage, "scope": None}
-    print_run_config({"Project": project_name, "Output file": f"results/{project_name}/reports/report.{format}", "File format": format, "Proxy": "disabled"})
+    storage = storage_from_selector(project, run_id)
+    context = {"project": storage.project, "storage": storage, "scope": None}
+    print_run_config({"Project": storage.project, "Output file": f"{storage.root}/reports/report.{format}", "File format": format, "Proxy": "disabled"})
     if format not in {"markdown", "json", "csv"}:
         print_warning("Format inconnu, utilisation de markdown.")
         format = "markdown"
@@ -967,6 +1023,48 @@ def classify_endpoint(url: str) -> str:
     if any(token in lower for token in ("/login", "/oauth", "/openid", "/sso")):
         return "auth"
     return "web"
+
+
+def read_endpoint_input(input_file: str) -> list[dict]:
+    path = Path(input_file)
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            row = {"url": line.strip(), "method": "GET", "type": classify_endpoint(line.strip())}
+        if row.get("url"):
+            row.setdefault("method", "GET")
+            row.setdefault("type", classify_endpoint(row["url"]))
+            rows.append(row)
+    return rows
+
+
+def infer_run_id_from_input(input_file: str) -> str | None:
+    path = Path(input_file)
+    parts = path.parts
+    if "results" in parts:
+        index = parts.index("results")
+        if len(parts) > index + 1:
+            return parts[index + 1]
+    if path.parent.name:
+        return path.parent.name
+    return None
+
+
+def infer_scope_from_input(input_file: str) -> str | None:
+    run_id = infer_run_id_from_input(input_file)
+    if not run_id:
+        return None
+    config = Path("results") / run_id / "run_config.json"
+    data = load_result_json(config)
+    if isinstance(data, dict) and data.get("Scope"):
+        return str(data["Scope"])
+    return None
 
 
 if __name__ == "__main__":

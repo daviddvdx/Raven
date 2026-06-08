@@ -15,9 +15,10 @@ class Storage:
         self.project = project
         self.root = Path(base_dir) / project
         self.raw_dir = self.root / "raw"
+        self.js_files_dir = self.root / "js_files"
         self.screenshots_dir = self.root / "screenshots"
         self.reports_dir = self.root / "reports"
-        for directory in (self.root, self.raw_dir, self.screenshots_dir, self.reports_dir):
+        for directory in (self.root, self.raw_dir, self.js_files_dir, self.screenshots_dir, self.reports_dir):
             directory.mkdir(parents=True, exist_ok=True)
         self.sqlite_path = self.root / "raven.sqlite3"
         self._init_sqlite()
@@ -80,7 +81,9 @@ class Storage:
         existing.extend(finding.to_dict() for finding in findings)
         existing.sort(key=lambda item: item.get("score", 0), reverse=True)
         for finding in findings:
-            self.insert_result("findings", finding.to_dict())
+            finding_data = finding.to_dict()
+            self.append_jsonl("findings.jsonl", finding_data)
+            self.insert_result("findings", finding_data)
         return self.write_json("findings.json", existing)
 
     def insert_result(self, table: str, data: dict[str, Any]) -> None:

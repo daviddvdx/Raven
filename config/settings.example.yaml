@@ -1,20 +1,25 @@
-user_agent: "RAVEN/0.1.0-dev authorized-bugbounty"
+user_agent: "Mozilla/5.0 Raven-BugBounty"
 headers:
   Accept: "*/*"
-  User-Agent: "RAVEN/0.1.0-dev authorized-bugbounty"
+  User-Agent: "Mozilla/5.0 Raven-BugBounty"
+  X-Bug-Bounty: "research"
 timeout: 10
 retries: 1
 max_concurrency: 3
-rate_limit_per_second: 1
-threads: 3
+rate_limit_per_second: 5
+threads: 5
 follow_redirects: false
 respect_robots: false
+respect_scope: true
+verify_tls: true
 output_format: "json"
 safe_mode: true
 
 proxy:
   enabled: false
   url: "http://127.0.0.1:8080"
+  http: "http://127.0.0.1:8080"
+  https: "http://127.0.0.1:8080"
 
 content_discovery:
   extensions:
@@ -23,7 +28,12 @@ content_discovery:
     - ".map"
     - ".json"
     - ".txt"
+    - ".xml"
+    - ".yml"
+    - ".yaml"
     - ".html"
+    - ".bak"
+    - ".old"
     - ".svg"
     - ".png"
     - ".woff"
@@ -36,6 +46,22 @@ content_discovery:
     - "page not found"
   calibration_samples: 5
   recursive: false
+  auto_calibration: true
+  wordlists:
+    - "/usr/share/seclists/Discovery/Web-Content/common.txt"
+    - "/usr/share/seclists/Discovery/Web-Content/raft-small-words.txt"
+  match_status:
+    - 200
+    - 204
+    - 301
+    - 302
+    - 307
+    - 308
+    - 401
+  exclude_status:
+    - 403
+    - 404
+  exclude_sizes: []
 
 profiles:
   passive:
@@ -78,7 +104,29 @@ profiles:
     max_concurrency: 5
     timeout: 8
     safe_mode: true
+    active_payloads: true
+    api_probe: true
+    max_payloads_per_param: 5
+    allow_post_tests: true
+    allow_put_tests: false
+    allow_delete_tests: false
+    allow_time_based_tests: false
+    allow_out_of_band_tests: false
     allow_state_changing_methods: false
+
+payloads:
+  enabled: true
+  profile: "safe"
+  marker_prefix: "raven"
+  test_reflection: true
+  test_open_redirect: true
+  test_path_traversal: true
+  test_ssti_basic: true
+  test_sql_error_basic: true
+  test_header_injection: true
+  test_json_type_confusion: true
+  test_mass_assignment_hints: true
+  test_graphql_introspection: true
 
 seclists:
   enabled: true

@@ -66,12 +66,9 @@ def detect_technologies(headers: dict[str, str], body: str = "") -> list[str]:
 
 
 def mask_secret(value: str, visible: int = 4) -> str:
-    if not value:
-        return ""
-    compact = str(value)
-    if len(compact) <= visible * 2:
-        return "*" * len(compact)
-    return f"{compact[:visible]}...{compact[-visible:]}"
+    from core.redaction import mask_secret as redact_secret
+
+    return redact_secret(value, visible=visible)
 
 
 def parse_csv(value: str | None) -> list[str]:

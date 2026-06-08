@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import yaml
 
@@ -27,6 +27,7 @@ class Scope:
     allowed_paths: list[str] | None = None
     denied_paths: list[str] | None = None
     allowed_methods: list[str] | None = None
+    allowed_schemes: list[str] | None = None
     max_depth: int = 2
     notes: str = ""
     bug_bounty_handle: str = ""
@@ -55,6 +56,7 @@ class Scope:
             allowed_paths=list(data.get("allowed_paths", [])),
             denied_paths=denied_paths,
             allowed_methods=list(data.get("allowed_methods", ["GET", "HEAD", "OPTIONS"])),
+            allowed_schemes=list(data.get("allowed_schemes", ["https", "http"])),
             max_depth=int(data.get("max_depth", 2)),
             notes=str(data.get("notes", "")),
             bug_bounty_handle=str(data.get("bug_bounty_handle", "")),
@@ -65,6 +67,8 @@ class Scope:
         host = parsed.hostname
         if not parsed.scheme or not host:
             raise ScopeError(f"Cible invalide: {target}")
+        if self.allowed_schemes and parsed.scheme.lower() not in {scheme.lower() for scheme in self.allowed_schemes}:
+            raise ScopeError(f"Schema non autorise par le scope: {target}")
         if self._is_denied(host, target):
             raise ScopeError(f"Cible refusee par le scope deny: {target}")
         if self.denied_paths and any(parsed.path.startswith(path) for path in self.denied_paths):
@@ -84,6 +88,9 @@ class Scope:
         except ScopeError:
             return False
 
+    def is_url_in_scope(self, target: str) -> bool:
+        return self.is_allowed_url(target)
+
     def requests_per_second(self, default: float = 2.0) -> float:
         try:
             return float(self.rate_limit.get("requests_per_second", default))
@@ -93,6 +100,30 @@ class Scope:
     def is_method_allowed(self, method: str) -> bool:
         methods = self.allowed_methods or ["GET", "HEAD", "OPTIONS"]
         return method.upper() in {item.upper() for item in methods}
+
+    def is_domain_allowed(self, hostname: str) -> bool:
+        return self._domain_allowed(hostname)
+
+    def is_path_denied(self, path: str) -> bool:
+        denied = self.denied_paths or []
+        return any(path.startswith(item) for item in denied)
+
+    def normalize_url(self, target: str) -> str:
+        parsed = urlparse(target)
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+        path = parsed.path or "/"
+        query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
+        return urlunparse((scheme, netloc, path, "", query, ""))
+
+    def should_request(self, method: str, target: str) -> tuple[bool, str]:
+        if not self.is_method_allowed(method):
+            return False, f"method not allowed by scope: {method.upper()}"
+        try:
+            self.validate_url(target)
+        except ScopeError as exc:
+            return False, str(exc)
+        return True, "allowed"
 
     def _url_allowed(self, target: str) -> bool:
         normalized = target.rstrip("/")

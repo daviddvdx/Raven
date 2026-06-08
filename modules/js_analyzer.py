@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from hashlib import sha256
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -17,11 +18,18 @@ ABSOLUTE_URL_RE = re.compile(r"https?://[a-zA-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
 PATH_RE = re.compile(r"(?P<quote>['\"])(/[a-zA-Z0-9._~:/?#\[\]@!$&()*+,;=%-]{2,})(?P=quote)")
 FETCH_RE = re.compile(r"\bfetch\(\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
 AXIOS_RE = re.compile(r"\baxios\.(?:get|post|put|delete|patch)\(\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
-XHR_RE = re.compile(r"\.open\(\s*['\"](?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)['\"]\s*,\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+XHR_RE = re.compile(r"\.open\(\s*['\"](?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)['\"]\s*,\s*['\"](?P<url>[^'\"]+)['\"]", re.IGNORECASE)
+AJAX_RE = re.compile(r"\$\.ajax\(\s*\{(?P<body>.*?)\}\s*\)", re.IGNORECASE | re.DOTALL)
 WINDOW_URL_RE = re.compile(r"window\.[A-Z0-9_]*URL[A-Z0-9_]*\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+SOURCEMAP_RE = re.compile(r"sourceMappingURL=([^\s*]+)", re.IGNORECASE)
 JWT_RE = re.compile(r"eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}")
 API_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|client_secret)\s*[:=]\s*['\"][^'\"]{8,}['\"]")
 HISTORICAL_PATH_MARKERS = ("admin", "upload", "file", "download", "debug", "actuator", "openapi", "swagger", "graphql", "realms", "openid-connect")
+INTERESTING_KEYWORDS = (
+    "api", "auth", "login", "token", "bearer", "authorization", "client_id", "redirect_uri", "graphql",
+    "admin", "internal", "staging", "debug", "dev", "secret", "password", "upload", "download", "invoice",
+    "order", "user", "account", "profile", "payment", "voucher", "coupon", "shipment", "tracking",
+)
 
 
 def load_keywords() -> list[str]:
@@ -71,14 +79,26 @@ def analyze_javascript(context, js_files: list[str] | None = None) -> dict[str, 
             body = result.body_text or ""
         except Exception:
             continue
+        saved_path = save_js_file(storage, js_url, body)
+        storage.append_jsonl(
+            "js_files.jsonl",
+            {
+                "url": js_url,
+                "path": str(saved_path),
+                "size": result.size,
+                "hash": result.body_hash,
+                "source_map": detect_sourcemaps(js_url, body),
+            },
+        )
         for absolute in ABSOLUTE_URL_RE.findall(body):
             if scope.is_allowed_url(absolute):
                 endpoints.add(absolute)
-        candidate_paths = [match.group(2) for match in PATH_RE.finditer(body)]
-        candidate_paths.extend(match.group(1) for regex in (FETCH_RE, AXIOS_RE, XHR_RE, WINDOW_URL_RE) for match in regex.finditer(body))
-        for path in candidate_paths:
-            if any(token in path for token in ("/api", "/v1/", "/v2/", "/admin", "/internal", "/private")):
-                endpoints.add(resolve_url(js_url, path))
+        extracted = extract_js_endpoints(body, js_url)
+        for item in extracted:
+            if scope.is_allowed_url(item["url"]):
+                endpoints.add(item["url"])
+                storage.append_jsonl("js_endpoints.jsonl", item)
+                storage.save_endpoint(Endpoint(item["url"], item["type"], "js", method=item["method"], tags=item["keywords"]).to_dict())
         for keyword in keywords:
             if keyword and keyword.lower() in body.lower():
                 keyword_hits.append(f"{js_url}: {keyword}")
@@ -135,12 +155,77 @@ def analyze_javascript(context, js_files: list[str] | None = None) -> dict[str, 
 
     for endpoint in sorted(endpoints):
         storage.append_line("js_endpoints.txt", endpoint)
-        storage.append_jsonl("js_endpoints.jsonl", {"url": endpoint, "source": "js", "type": classify_js_endpoint(endpoint)})
-        storage.save_endpoint(Endpoint(endpoint, classify_js_endpoint(endpoint), "js").to_dict())
     storage.write_json("js_exploitdb_patterns.json", exploitdb_pattern_hits)
     storage.write_text("js_findings.md", render_js_markdown(files, endpoints, keyword_hits, findings))
     storage.save_findings(findings)
     return {"js_files": sorted(files), "endpoints": sorted(endpoints), "keyword_hits": keyword_hits}
+
+
+def save_js_file(storage, js_url: str, body: str) -> Path:
+    digest = sha256(js_url.encode("utf-8")).hexdigest()[:12]
+    filename = Path(js_url.split("?")[0]).name or "script.js"
+    if not filename.endswith(".js"):
+        filename = f"{filename}.js"
+    path = storage.js_files_dir / f"{digest}-{filename}"
+    path.write_text(body, encoding="utf-8", errors="ignore")
+    return path
+
+
+def extract_js_endpoints(body: str, base_url: str) -> list[dict]:
+    found: dict[tuple[str, str], dict] = {}
+
+    def add(raw_url: str, method: str = "GET", source: str = "js") -> None:
+        if not raw_url or raw_url.startswith(("data:", "blob:", "mailto:", "#")):
+            return
+        url = resolve_url(base_url, raw_url)
+        item = {
+            "url": url,
+            "method": method.upper(),
+            "source": source,
+            "type": classify_js_endpoint(url),
+            "keywords": [keyword for keyword in INTERESTING_KEYWORDS if keyword in url.lower()],
+            "criticality": endpoint_criticality(url),
+        }
+        found[(item["url"], item["method"])] = item
+
+    for absolute in ABSOLUTE_URL_RE.findall(body):
+        add(absolute, "GET", "absolute-url")
+    for match in PATH_RE.finditer(body):
+        add(match.group(2), "GET", "path-string")
+    for match in FETCH_RE.finditer(body):
+        method_match = re.search(r"method\s*:\s*['\"]([A-Z]+)['\"]", body[match.end() : match.end() + 240], re.IGNORECASE)
+        add(match.group(1), method_match.group(1) if method_match else "GET", "fetch")
+    for match in AXIOS_RE.finditer(body):
+        method = re.search(r"axios\.(get|post|put|delete|patch)", match.group(0), re.IGNORECASE)
+        add(match.group(1), method.group(1).upper() if method else "GET", "axios")
+    for match in XHR_RE.finditer(body):
+        add(match.group("url"), match.group("method"), "xhr")
+    for match in WINDOW_URL_RE.finditer(body):
+        add(match.group(1), "GET", "window-url")
+    for match in AJAX_RE.finditer(body):
+        ajax_body = match.group("body")
+        url_match = re.search(r"url\s*:\s*['\"]([^'\"]+)['\"]", ajax_body, re.IGNORECASE)
+        method_match = re.search(r"(?:method|type)\s*:\s*['\"]([A-Z]+)['\"]", ajax_body, re.IGNORECASE)
+        if url_match:
+            add(url_match.group(1), method_match.group(1) if method_match else "GET", "jquery-ajax")
+    return sorted(found.values(), key=lambda item: (item["url"], item["method"]))
+
+
+def detect_sourcemaps(js_url: str, body: str) -> list[str]:
+    maps = [resolve_url(js_url, match.group(1).strip()) for match in SOURCEMAP_RE.finditer(body)]
+    maps.append(f"{js_url}.map")
+    return sorted(set(maps))
+
+
+def endpoint_criticality(url: str) -> str:
+    lower = url.lower()
+    if any(token in lower for token in ("auth", "account", "payment", "user", "upload", "download", "invoice", "order")):
+        return "high"
+    if any(token in lower for token in ("/api", "/graphql", "/v1/", "/v2/")):
+        return "medium"
+    if classify_js_endpoint(url) == "static":
+        return "info"
+    return "low"
 
 
 def classify_js_endpoint(url: str) -> str:

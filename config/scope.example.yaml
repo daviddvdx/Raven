@@ -22,13 +22,18 @@ allowed_paths:
 denied_paths:
   - "/logout"
   - "/delete"
+  - "/remove"
   - "/payments"
+  - "/admin/destructive"
+allowed_schemes:
+  - "https"
 allowed_methods:
   - "GET"
   - "HEAD"
   - "OPTIONS"
-max_depth: 2
-notes: "Replace this example with the exact public Bug Bounty scope before scanning."
+  - "POST"
+max_depth: 3
+notes: "Authorized testing only. Replace this example with the exact public Bug Bounty scope before scanning."
 user_agent_suffix: "your-handle-authorized-research"
 rate_limit:
   requests_per_second: 2

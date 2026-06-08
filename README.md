@@ -93,7 +93,7 @@ RAVEN ralentit ou met en pause si des signaux 403, 429, 503, timeouts ou WAF/CDN
 python3 main.py init --project example
 python3 main.py doctor
 python3 main.py scan --scope config/scope.yaml --profile passive
-python3 main.py scan --scope config/scope.yaml --target https://example.com --profile balanced
+python3 main.py scan --scope config/scope.yaml --target https://example.com --profile active-safe
 python3 main.py recon --scope config/scope.yaml --profile passive
 python3 main.py crawl --scope config/scope.yaml --target https://example.com --depth 2 --profile passive
 python3 main.py js --scope config/scope.yaml --target https://example.com --profile passive
@@ -106,6 +106,22 @@ Profils CLI modernes :
 - `active-safe` : checks actifs non destructifs, sans POST/PUT/PATCH/DELETE par defaut.
 
 Les anciens profils `quiet`, `balanced`, `deep` restent acceptes pour compatibilite.
+
+Chaque nouveau run actif cree un dossier :
+
+```text
+results/<run_id>/
+  raven.log
+  requests.jsonl
+  endpoints.jsonl
+  js_files/
+  js_files.jsonl
+  js_endpoints.jsonl
+  active_findings.jsonl
+  findings.json
+  reports/report.md
+  reports/report.json
+```
 
 Fuzzing controle avec calibration active par defaut :
 
@@ -162,13 +178,23 @@ python3 main.py idor \
 Rapport :
 
 ```bash
-python3 main.py report --project example --format markdown
-python3 main.py show --project example
-python3 main.py findings --project example --severity medium
-python3 main.py endpoints --project example --type api
-python3 main.py export --project example --format markdown
+python3 main.py report --run-id <run_id> --format markdown
+python3 main.py show --run-id <run_id>
+python3 main.py findings --run-id <run_id> --severity medium
+python3 main.py endpoints --run-id <run_id> --type api
+python3 main.py export --run-id <run_id> --format markdown
 python3 main.py resume --run-id <run_id>
 ```
+
+Scan actif safe sur les endpoints deja collectes :
+
+```bash
+python3 main.py active \
+  --input results/<run_id>/endpoints.jsonl \
+  --payload-profile safe
+```
+
+Le moteur actif safe utilise uniquement des marqueurs non destructifs : reflection marker, open redirect sur parametres cibles, erreurs SQL basiques sans time-based, SSTI basique, path traversal indicatif, type confusion JSON limitee. Il respecte le scope, les chemins interdits et les methodes autorisees.
 
 Apres installation comme console script, l'objectif est :
 
@@ -214,7 +240,16 @@ Les commandes `show`, `findings`, `endpoints` et `export` relisent ces fichiers 
 
 ## Limites de securite
 
-RAVEN ne fait pas de DDoS, bruteforce, credential stuffing, spam, exploitation destructive, bypass WAF/anti-bot ou execution JavaScript navigateur. Les modules IDOR et XSS sont concus pour produire des candidats a verifier manuellement dans Burp Suite, uniquement sur des programmes autorises.
+RAVEN ne fait pas de DDoS, bruteforce, credential stuffing, OTP bypass, password guessing, spam, exploitation destructive, bypass WAF/anti-bot ou execution JavaScript navigateur. Les modules actifs sont concus pour produire des candidats a verifier manuellement dans Burp Suite, uniquement sur des programmes autorises.
+
+## Interpreter les findings
+
+- `info` : observation utile, pas une vulnerabilite confirmee.
+- `low` : signal faible ou non destructif a verifier.
+- `medium` : comportement interessant avec preuve technique, validation manuelle requise.
+- `high/critical` : RAVEN ne les attribue pas automatiquement sans preuve forte.
+
+Les secrets sont toujours masques dans les logs, rapports et preuves.
 
 ## Ajouter un module
 
