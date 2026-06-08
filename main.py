@@ -79,6 +79,9 @@ def build_context(
     verify_tls: bool = True,
     run_id_override: str | None = None,
 ):
+    if profile.startswith("-"):
+        print_error("Valeur manquante apres --profile. Exemple correct: --profile deep --confirm-deep")
+        raise typer.Exit(1)
     if profile not in VALID_PROFILES:
         print_error(f"Profil invalide: {profile}. Utilise passive, balanced, active-safe, quiet ou deep.")
         raise typer.Exit(1)
